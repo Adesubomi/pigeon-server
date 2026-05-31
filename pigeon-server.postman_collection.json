@@ -1,0 +1,715 @@
+{
+  "info": {
+    "_postman_id": "aa0b9832-9b14-40a3-9608-20fd013e61a3",
+    "name": "pigeon-server local",
+    "description": "Local smoke collection for pigeon-server. Run against a server started with APP_PORT=18080 PUBLIC_BASE_URL=http://localhost:18080 go run ./cmd/server. Authenticated user routes require a valid Bearer access token; the included local environment contains the dev token seeded during the 2026-05-30 smoke test.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('response is not a server error', function () {",
+          "  pm.expect(pm.response.code).to.be.below(500);",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /healthz",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('health is ok', function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.data.status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "GET /auth/github",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GitHub auth URL is returned or not implemented locally', function () {",
+                  "  pm.expect([200, 501]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/auth/github"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/github/exchange",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GitHub exchange succeeds or is not configured locally', function () {",
+                  "  pm.expect([200, 501, 401]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.environment.set('access_token', body.data.access_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"replace-with-github-oauth-code\",\n  \"redirect_uri\": \"\"\n}"
+            },
+            "url": "{{base_url}}/auth/github/exchange"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /me",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('returns current user', function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.data.user.id).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/me"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/auth/logout"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Endpoints",
+      "item": [
+        {
+          "name": "POST /endpoints",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('endpoint_id', body.data.id);",
+                  "pm.environment.set('endpoint_slug', body.data.slug);",
+                  "pm.test('endpoint variables captured', function () {",
+                  "  pm.expect(body.data.id).to.be.a('string');",
+                  "  pm.expect(body.data.slug).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{endpoint_name}}\"\n}"
+            },
+            "url": "{{base_url}}/endpoints"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /endpoints",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('returns an array', function () {",
+                  "  pm.expect(pm.response.json().data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/endpoints"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /endpoints/:id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('returns selected endpoint', function () {",
+                  "  pm.expect(pm.response.json().data.id).to.eql(pm.environment.get('endpoint_id'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/endpoints/{{endpoint_id}}"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /endpoints/:id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('endpoint remains active', function () {",
+                  "  pm.expect(pm.response.json().data.is_active).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{endpoint_name}} Updated\",\n  \"is_active\": true\n}"
+            },
+            "url": "{{base_url}}/endpoints/{{endpoint_id}}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /endpoints/:id/pairing-codes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('pairing_code', body.data.code);",
+                  "pm.test('pairing code captured', function () {",
+                  "  pm.expect(body.data.code).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/endpoints/{{endpoint_id}}/pairing-codes"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /endpoints/:id/devices",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/endpoints/{{endpoint_id}}/devices"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /endpoints/:id/events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/endpoints/{{endpoint_id}}/events"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Devices",
+      "item": [
+        {
+          "name": "POST /devices/pair",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('device_id', body.data.device_id);",
+                  "pm.environment.set('device_token', body.data.token);",
+                  "pm.test('device credentials captured', function () {",
+                  "  pm.expect(body.data.device_id).to.be.a('string');",
+                  "  pm.expect(body.data.token).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{pairing_code}}\",\n  \"device_id\": \"{{device_local_id}}\",\n  \"device_name\": \"Postman Local Device\"\n}"
+            },
+            "url": "{{base_url}}/devices/pair"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /devices/heartbeat",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('last_seen_at returned', function () {",
+                  "  pm.expect(pm.response.json().data.last_seen_at).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{device_token}}"
+              }
+            ],
+            "url": "{{base_url}}/devices/heartbeat"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /devices/:id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('device updated', function () {",
+                  "  pm.expect(pm.response.json().data.id).to.eql(pm.environment.get('device_id'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-Pigeon-Device-Token",
+                "value": "{{device_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"device_name\": \"Postman Local Device Renamed\",\n  \"is_active\": true\n}"
+            },
+            "url": "{{base_url}}/devices/{{device_id}}"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Webhooks and Events",
+      "item": [
+        {
+          "name": "POST /hooks/:slug",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.environment.set('event_id', body.data.event_id);",
+                  "pm.test('event id captured', function () {",
+                  "  pm.expect(body.data.event_id).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Pigeon-Signature",
+                "value": "local-smoke"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"payment.succeeded\",\n  \"amount\": 4200\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/hooks/{{endpoint_slug}}?source=postman",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "hooks",
+                "{{endpoint_slug}}"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "postman"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /events/:id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('returns selected event', function () {",
+                  "  pm.expect(pm.response.json().data.id).to.eql(pm.environment.get('event_id'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/events/{{event_id}}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /events/:id/replay",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('replay queued', function () {",
+                  "  pm.expect(pm.response.json().data.status).to.eql('queued');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/events/{{event_id}}/replay"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /stream",
+          "description": "Open this manually after pairing a device, then send POST /hooks/:slug. Postman should show an initial ': connected' comment followed by a webhook.event server-sent event.",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{device_token}}"
+              },
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": "{{base_url}}/stream"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Cleanup",
+      "item": [
+        {
+          "name": "DELETE /devices/:id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{device_token}}"
+              }
+            ],
+            "url": "{{base_url}}/devices/{{device_id}}"
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /endpoints/:id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 204', function () {",
+                  "  pm.response.to.have.status(204);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": "{{base_url}}/endpoints/{{endpoint_id}}"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:18080"
+    }
+  ]
+}

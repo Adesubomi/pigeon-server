@@ -1,0 +1,47 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go build and test artifacts
+/bin/
+/dist/
+/build/
+*.test
+*.out
+coverage.*
+cover.out
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+tmp/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local.postman_environment.json
+*.local
+*.secret
+*.secrets
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa
+id_ed25519
+
+# IDE and editor settings
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# Tool caches
+.cache/
