@@ -10,6 +10,7 @@ const (
 	TypeConflict     = "conflict"
 	TypeValidation   = "validation"
 	TypeInternal     = "internal"
+	TypeUnavailable  = "service_unavailable"
 )
 
 type AppError struct {
@@ -75,6 +76,15 @@ func Internal(err error) *AppError {
 		Message: "Internal server error",
 		Status:  500,
 		Err:     err,
+	}
+}
+
+func ServiceUnavailable(code, message string) *AppError {
+	return &AppError{
+		Type:    TypeUnavailable,
+		Code:    code,
+		Message: message,
+		Status:  503,
 	}
 }
 

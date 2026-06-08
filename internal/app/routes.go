@@ -3,7 +3,9 @@ package app
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/adesubomi/pigeon-server/internal/domain/auth"
@@ -44,7 +46,6 @@ func (a *App) routes(cfg routesConfig) http.Handler {
 	r.Post("/hooks/{slug}", cfg.eventHandler.ReceiveWebhook)
 
 	r.Get("/auth/github", cfg.authHandler.GitHubLogin)
-	r.Get("/auth/callback", cfg.authHandler.GitHubCallback)
 	r.Post("/auth/github/exchange", cfg.authHandler.GitHubExchange)
 	r.Post("/auth/logout", cfg.authHandler.Logout)
 	r.With(cfg.authService.RequireUser).Get("/me", cfg.authHandler.Me)
@@ -77,15 +78,27 @@ func (a *App) routes(cfg routesConfig) http.Handler {
 
 func (a *App) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Pigeon-Device-Token")
+		origin := r.Header.Get("Origin")
+		if origin != "" && origin == webAppOrigin(a.cfg.WebAppURL) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Pigeon-Device-Token")
+		}
 		if r.Method == http.MethodOptions {
 			respond.NoContent(w)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func webAppOrigin(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func (a *App) recoverMiddleware(next http.Handler) http.Handler {

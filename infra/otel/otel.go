@@ -25,7 +25,9 @@ func Setup(ctx context.Context, cfg *config.Config) (ShutdownFunc, error) {
 
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes("", attribute.String("service.name", "pigeon-server")),
+		resource.NewWithAttributes("",
+			attribute.String("service.name", cfg.ServiceName),
+		),
 	)
 	if err != nil {
 		return nil, err

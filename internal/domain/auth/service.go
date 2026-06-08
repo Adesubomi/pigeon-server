@@ -27,27 +27,32 @@ type Service struct {
 	db         *gorm.DB
 	cfg        *config.Config
 	httpClient *http.Client
+	loadUser   func(context.Context, string) (*User, error)
 }
 
 func NewService(db *gorm.DB, cfg *config.Config) *Service {
-	return &Service{
+	service := &Service{
 		db:         db,
 		cfg:        cfg,
 		httpClient: http.DefaultClient,
 	}
+	service.loadUser = service.loadUserFromDB
+	return service
 }
 
 func (s *Service) GitHubLoginURL(ctx context.Context, redirectURI, state string) (string, error) {
 	if s.cfg.GitHubClientID == "" {
-		return "", apperr.NotImplemented()
+		return "", githubOAuthNotConfigured()
+	}
+	redirectURI, err := s.validateRedirectURI(redirectURI)
+	if err != nil {
+		return "", err
 	}
 
 	values := url.Values{}
 	values.Set("client_id", s.cfg.GitHubClientID)
 	values.Set("scope", "user:email")
-	if redirectURI != "" {
-		values.Set("redirect_uri", redirectURI)
-	}
+	values.Set("redirect_uri", redirectURI)
 	if state != "" {
 		values.Set("state", state)
 	}
@@ -60,8 +65,13 @@ func (s *Service) ExchangeGitHubCode(ctx context.Context, input GitHubExchangeIn
 		return nil, apperr.BadRequest("auth.code_required", "OAuth code is required")
 	}
 	if s.cfg.GitHubClientID == "" || s.cfg.GitHubClientSecret == "" {
-		return nil, apperr.NotImplemented()
+		return nil, githubOAuthNotConfigured()
 	}
+	redirectURI, err := s.validateRedirectURI(input.RedirectURI)
+	if err != nil {
+		return nil, err
+	}
+	input.RedirectURI = redirectURI
 
 	githubToken, err := s.exchangeGitHubToken(ctx, input)
 	if err != nil {
@@ -74,7 +84,7 @@ func (s *Service) ExchangeGitHubCode(ctx context.Context, input GitHubExchangeIn
 	}
 
 	user := User{
-		GitHubID:  fmt.Sprintf("%d", githubUser.ID),
+		GithubID:  fmt.Sprintf("%d", githubUser.ID),
 		Email:     githubUser.Email,
 		Name:      githubUser.Name,
 		AvatarURL: githubUser.AvatarURL,
@@ -84,7 +94,7 @@ func (s *Service) ExchangeGitHubCode(ctx context.Context, input GitHubExchangeIn
 	}
 
 	if err := s.db.WithContext(ctx).
-		Where(User{GitHubID: user.GitHubID}).
+		Where(User{GithubID: user.GithubID}).
 		Assign(User{
 			Email:     user.Email,
 			Name:      user.Name,
@@ -95,6 +105,13 @@ func (s *Service) ExchangeGitHubCode(ctx context.Context, input GitHubExchangeIn
 	}
 
 	return s.tokenResponse(&user)
+}
+
+func githubOAuthNotConfigured() error {
+	return apperr.ServiceUnavailable(
+		"auth.github_not_configured",
+		"GitHub OAuth is not configured",
+	)
 }
 
 func (s *Service) CurrentUser(ctx context.Context) (*User, error) {
@@ -119,14 +136,22 @@ func (s *Service) RequireUser(next http.Handler) http.Handler {
 			return
 		}
 
-		var user User
-		if err := s.db.WithContext(r.Context()).First(&user, "id = ?", userID).Error; err != nil {
+		user, err := s.loadUser(r.Context(), userID)
+		if err != nil {
 			respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 			return
 		}
 
-		next.ServeHTTP(w, r.WithContext(ContextWithUser(r.Context(), &user)))
+		next.ServeHTTP(w, r.WithContext(ContextWithUser(r.Context(), user)))
 	})
+}
+
+func (s *Service) loadUserFromDB(ctx context.Context, userID string) (*User, error) {
+	var user User
+	if err := s.db.WithContext(ctx).First(&user, "id = ?", userID).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
 }
 
 func (s *Service) CreateAccessToken(userID string) (string, time.Time, error) {
@@ -221,9 +246,7 @@ func (s *Service) exchangeGitHubToken(ctx context.Context, input GitHubExchangeI
 	payload.Set("client_id", s.cfg.GitHubClientID)
 	payload.Set("client_secret", s.cfg.GitHubClientSecret)
 	payload.Set("code", strings.TrimSpace(input.Code))
-	if input.RedirectURI != "" {
-		payload.Set("redirect_uri", input.RedirectURI)
-	}
+	payload.Set("redirect_uri", input.RedirectURI)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", strings.NewReader(payload.Encode()))
 	if err != nil {
@@ -258,6 +281,28 @@ func (s *Service) exchangeGitHubToken(ctx context.Context, input GitHubExchangeI
 	}
 
 	return &tokenResponse, nil
+}
+
+func (s *Service) validateRedirectURI(value string) (string, error) {
+	if value = strings.TrimSpace(value); value == "" {
+		value = strings.TrimRight(s.cfg.WebAppURL, "/") + "/auth/callback"
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+		return "", apperr.BadRequest("auth.redirect_uri_invalid", "OAuth redirect URI is not allowed")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", apperr.BadRequest("auth.redirect_uri_invalid", "OAuth redirect URI is not allowed")
+	}
+
+	allowed := append([]string{strings.TrimRight(s.cfg.WebAppURL, "/") + "/auth/callback"}, s.cfg.OAuthRedirectAllowlist...)
+	for _, candidate := range allowed {
+		if value == strings.TrimSpace(candidate) {
+			return value, nil
+		}
+	}
+	return "", apperr.BadRequest("auth.redirect_uri_invalid", "OAuth redirect URI is not allowed")
 }
 
 func (s *Service) fetchGitHubUser(ctx context.Context, accessToken string) (*githubUserResponse, error) {

@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "aa0b9832-9b14-40a3-9608-20fd013e61a3",
     "name": "pigeon-server local",
-    "description": "Local smoke collection for pigeon-server. Run against a server started with APP_PORT=18080 PUBLIC_BASE_URL=http://localhost:18080 go run ./cmd/server. Authenticated user routes require a valid Bearer access token; the included local environment contains the dev token seeded during the 2026-05-30 smoke test.",
+    "description": "Local smoke collection for pigeon-server. Run against a server started with APP_PORT=18080 go run ./cmd/server. Authenticated user routes require a valid Bearer access token; the included local environment contains the dev token seeded during the 2026-05-30 smoke test.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -61,8 +61,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('GitHub auth URL is returned or not implemented locally', function () {",
-                  "  pm.expect([200, 501]).to.include(pm.response.code);",
+                  "pm.test('GitHub auth URL is returned or OAuth is not configured locally', function () {",
+                  "  pm.expect([200, 503]).to.include(pm.response.code);",
                   "});"
                 ]
               }
@@ -84,7 +84,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('GitHub exchange succeeds or is not configured locally', function () {",
-                  "  pm.expect([200, 501, 401]).to.include(pm.response.code);",
+                  "  pm.expect([200, 503, 401]).to.include(pm.response.code);",
                   "});",
                   "if (pm.response.code === 200) {",
                   "  const body = pm.response.json();",

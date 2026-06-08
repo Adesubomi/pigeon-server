@@ -9,7 +9,7 @@ import (
 
 type User struct {
 	ID        string    `gorm:"type:uuid;primaryKey" json:"id"`
-	GitHubID  string    `gorm:"uniqueIndex;not null" json:"github_id"`
+	GithubID  string    `gorm:"uniqueIndex;not null" json:"github_id"`
 	Email     string    `gorm:"index" json:"email"`
 	Name      string    `json:"name"`
 	AvatarURL string    `json:"avatar_url"`

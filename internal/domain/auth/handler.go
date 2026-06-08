@@ -29,18 +29,6 @@ func (h *Handler) GitHubLogin(w http.ResponseWriter, r *http.Request) {
 	respond.OK(w, GitHubLoginResponse{URL: url})
 }
 
-func (h *Handler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
-	result, err := h.service.ExchangeGitHubCode(r.Context(), GitHubExchangeInput{
-		Code:        r.URL.Query().Get("code"),
-		RedirectURI: r.URL.Query().Get("redirect_uri"),
-	})
-	if err != nil {
-		respond.Error(w, err)
-		return
-	}
-	respond.OK(w, result)
-}
-
 func (h *Handler) GitHubExchange(w http.ResponseWriter, r *http.Request) {
 	var req GitHubExchangeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
