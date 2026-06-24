@@ -1,29 +1,28 @@
-package event
+package services
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
-	"github.com/adesubomi/pigeon-server/internal/domain/endpoint"
-	"github.com/adesubomi/pigeon-server/internal/domain/push"
+	endpointDomain "github.com/adesubomi/pigeon-server/internal/domain/endpoint"
+	eventDomain "github.com/adesubomi/pigeon-server/internal/domain/event"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
-	"github.com/adesubomi/pigeon-server/pkg/clock"
 	"gorm.io/gorm"
 )
 
-type Service struct {
+type EventService struct {
 	db      *gorm.DB
-	clock   clock.Clock
-	pushSvc *push.Service
+	pushSvc *PushService
 }
 
-func NewService(db *gorm.DB, clock clock.Clock, pushSvc *push.Service) *Service {
-	return &Service{db: db, clock: clock, pushSvc: pushSvc}
+func NewEvent(db *gorm.DB, pushSvc *PushService) *EventService {
+	return &EventService{db: db, pushSvc: pushSvc}
 }
 
-func (s *Service) ReceiveWebhook(ctx context.Context, input ReceiveWebhookInput) (*WebhookReceivedResponse, error) {
-	var hookEndpoint endpoint.Endpoint
+func (s *EventService) ReceiveWebhook(ctx context.Context, input eventDomain.ReceiveWebhookInput) (*eventDomain.WebhookReceivedResponse, error) {
+	var hookEndpoint endpointDomain.Endpoint
 	err := s.db.WithContext(ctx).First(&hookEndpoint, "slug = ? AND is_active = true", input.Slug).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, apperr.NotFound("endpoint.not_found", "Endpoint not found")
@@ -41,7 +40,7 @@ func (s *Service) ReceiveWebhook(ctx context.Context, input ReceiveWebhookInput)
 		return nil, apperr.BadRequest("request.invalid_query", "Invalid query string")
 	}
 
-	webhookEvent := Event{
+	webhookEvent := eventDomain.Event{
 		EndpointID:  hookEndpoint.ID,
 		Method:      input.Method,
 		Path:        input.Path,
@@ -49,13 +48,13 @@ func (s *Service) ReceiveWebhook(ctx context.Context, input ReceiveWebhookInput)
 		QueryJSON:   queryJSON,
 		Body:        input.Body,
 		ContentType: input.ContentType,
-		ReceivedAt:  s.clock.Now(),
+		ReceivedAt:  time.Now(),
 	}
 	if err := s.db.WithContext(ctx).Create(&webhookEvent).Error; err != nil {
 		return nil, apperr.Internal(err)
 	}
 
-	if err := s.pushSvc.PushEvent(ctx, push.PushEventInput{
+	if err := s.pushSvc.PushEvent(ctx, PushEventInput{
 		EventID:    webhookEvent.ID,
 		EndpointID: hookEndpoint.ID,
 		Payload:    eventToPayload(&webhookEvent),
@@ -63,10 +62,10 @@ func (s *Service) ReceiveWebhook(ctx context.Context, input ReceiveWebhookInput)
 		return nil, err
 	}
 
-	return &WebhookReceivedResponse{EventID: webhookEvent.ID}, nil
+	return &eventDomain.WebhookReceivedResponse{EventID: webhookEvent.ID}, nil
 }
 
-func (s *Service) GetEvent(ctx context.Context, userID, id string) (*EventResponse, error) {
+func (s *EventService) GetEvent(ctx context.Context, userID, id string) (*eventDomain.EventResponse, error) {
 	webhookEvent, err := s.findUserEvent(ctx, userID, id)
 	if err != nil {
 		return nil, err
@@ -74,23 +73,23 @@ func (s *Service) GetEvent(ctx context.Context, userID, id string) (*EventRespon
 	return eventToResponse(webhookEvent), nil
 }
 
-func (s *Service) ReplayEvent(ctx context.Context, input ReplayEventInput) (*ReplayEventResponse, error) {
+func (s *EventService) ReplayEvent(ctx context.Context, input eventDomain.ReplayEventInput) (*eventDomain.ReplayEventResponse, error) {
 	webhookEvent, err := s.findUserEvent(ctx, input.UserID, input.EventID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.pushSvc.PushEvent(ctx, push.PushEventInput{
+	if err := s.pushSvc.PushEvent(ctx, PushEventInput{
 		EventID:    webhookEvent.ID,
 		EndpointID: webhookEvent.EndpointID,
 		Payload:    eventToPayload(webhookEvent),
 	}); err != nil {
 		return nil, err
 	}
-	return &ReplayEventResponse{EventID: webhookEvent.ID, Status: "queued"}, nil
+	return &eventDomain.ReplayEventResponse{EventID: webhookEvent.ID, Status: "queued"}, nil
 }
 
-func (s *Service) findUserEvent(ctx context.Context, userID, id string) (*Event, error) {
-	var webhookEvent Event
+func (s *EventService) findUserEvent(ctx context.Context, userID, id string) (*eventDomain.Event, error) {
+	var webhookEvent eventDomain.Event
 	err := s.db.WithContext(ctx).
 		Table("events").
 		Joins("JOIN endpoints ON endpoints.id = events.endpoint_id").
@@ -106,13 +105,13 @@ func (s *Service) findUserEvent(ctx context.Context, userID, id string) (*Event,
 	return &webhookEvent, nil
 }
 
-func eventToResponse(webhookEvent *Event) *EventResponse {
+func eventToResponse(webhookEvent *eventDomain.Event) *eventDomain.EventResponse {
 	var headers any
 	var query any
 	_ = json.Unmarshal(webhookEvent.HeadersJSON, &headers)
 	_ = json.Unmarshal(webhookEvent.QueryJSON, &query)
 
-	return &EventResponse{
+	return &eventDomain.EventResponse{
 		ID:          webhookEvent.ID,
 		EndpointID:  webhookEvent.EndpointID,
 		Method:      webhookEvent.Method,
@@ -126,9 +125,9 @@ func eventToResponse(webhookEvent *Event) *EventResponse {
 	}
 }
 
-func eventToPayload(webhookEvent *Event) PushPayload {
+func eventToPayload(webhookEvent *eventDomain.Event) eventDomain.PushPayload {
 	response := eventToResponse(webhookEvent)
-	return PushPayload{
+	return eventDomain.PushPayload{
 		EventID:     response.ID,
 		EndpointID:  response.EndpointID,
 		Method:      response.Method,

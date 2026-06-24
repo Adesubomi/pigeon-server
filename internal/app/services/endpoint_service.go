@@ -1,4 +1,4 @@
-package endpoint
+package services
 
 import (
 	"context"
@@ -8,22 +8,21 @@ import (
 	"strings"
 	"time"
 
+	domain "github.com/adesubomi/pigeon-server/internal/domain/endpoint"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
-	"github.com/adesubomi/pigeon-server/pkg/clock"
 	"github.com/adesubomi/pigeon-server/pkg/token"
 	"gorm.io/gorm"
 )
 
-type Service struct {
-	db    *gorm.DB
-	clock clock.Clock
+type EndpointService struct {
+	db *gorm.DB
 }
 
-func NewService(db *gorm.DB, clock clock.Clock) *Service {
-	return &Service{db: db, clock: clock}
+func NewEndpointSvc(db *gorm.DB) *EndpointService {
+	return &EndpointService{db: db}
 }
 
-func (s *Service) CreateEndpoint(ctx context.Context, input CreateEndpointInput) (*EndpointResponse, error) {
+func (s *EndpointService) CreateEndpoint(ctx context.Context, input domain.CreateEndpointInput) (*domain.EndpointResponse, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, apperr.Validation(map[string]string{"name": "Name is required"})
 	}
@@ -33,7 +32,7 @@ func (s *Service) CreateEndpoint(ctx context.Context, input CreateEndpointInput)
 		return nil, apperr.Internal(err)
 	}
 
-	endpoint := Endpoint{
+	endpoint := domain.Endpoint{
 		UserID:   input.UserID,
 		Name:     strings.TrimSpace(input.Name),
 		Slug:     slugify(input.Name) + "-" + strings.ToLower(suffix),
@@ -46,20 +45,20 @@ func (s *Service) CreateEndpoint(ctx context.Context, input CreateEndpointInput)
 	return endpointToResponse(&endpoint), nil
 }
 
-func (s *Service) ListEndpoints(ctx context.Context, userID string) ([]EndpointResponse, error) {
-	var endpoints []Endpoint
+func (s *EndpointService) ListEndpoints(ctx context.Context, userID string) ([]domain.EndpointResponse, error) {
+	var endpoints []domain.Endpoint
 	if err := s.db.WithContext(ctx).Where("user_id = ?", userID).Order("created_at desc").Find(&endpoints).Error; err != nil {
 		return nil, apperr.Internal(err)
 	}
 
-	responses := make([]EndpointResponse, 0, len(endpoints))
+	responses := make([]domain.EndpointResponse, 0, len(endpoints))
 	for i := range endpoints {
 		responses = append(responses, *endpointToResponse(&endpoints[i]))
 	}
 	return responses, nil
 }
 
-func (s *Service) GetEndpoint(ctx context.Context, userID, id string) (*EndpointResponse, error) {
+func (s *EndpointService) GetEndpoint(ctx context.Context, userID, id string) (*domain.EndpointResponse, error) {
 	endpoint, err := s.findUserEndpoint(ctx, userID, id)
 	if err != nil {
 		return nil, err
@@ -67,7 +66,7 @@ func (s *Service) GetEndpoint(ctx context.Context, userID, id string) (*Endpoint
 	return endpointToResponse(endpoint), nil
 }
 
-func (s *Service) UpdateEndpoint(ctx context.Context, input UpdateEndpointInput) (*EndpointResponse, error) {
+func (s *EndpointService) UpdateEndpoint(ctx context.Context, input domain.UpdateEndpointInput) (*domain.EndpointResponse, error) {
 	endpoint, err := s.findUserEndpoint(ctx, input.UserID, input.ID)
 	if err != nil {
 		return nil, err
@@ -88,7 +87,7 @@ func (s *Service) UpdateEndpoint(ctx context.Context, input UpdateEndpointInput)
 	return endpointToResponse(endpoint), nil
 }
 
-func (s *Service) DeleteEndpoint(ctx context.Context, userID, id string) error {
+func (s *EndpointService) DeleteEndpoint(ctx context.Context, userID, id string) error {
 	endpoint, err := s.findUserEndpoint(ctx, userID, id)
 	if err != nil {
 		return err
@@ -99,7 +98,7 @@ func (s *Service) DeleteEndpoint(ctx context.Context, userID, id string) error {
 	return nil
 }
 
-func (s *Service) GeneratePairingCode(ctx context.Context, userID, endpointID string) (*PairingCodeResponse, error) {
+func (s *EndpointService) GeneratePairingCode(ctx context.Context, userID, endpointID string) (*domain.PairingCodeResponse, error) {
 	if _, err := s.findUserEndpoint(ctx, userID, endpointID); err != nil {
 		return nil, err
 	}
@@ -109,24 +108,24 @@ func (s *Service) GeneratePairingCode(ctx context.Context, userID, endpointID st
 		return nil, apperr.Internal(err)
 	}
 
-	pairingCode := PairingCode{
+	pairingCode := domain.PairingCode{
 		EndpointID: endpointID,
 		CodeHash:   token.Hash(code),
-		ExpiresAt:  s.clock.Now().Add(10 * time.Minute),
+		ExpiresAt:  time.Now().Add(10 * time.Minute),
 	}
 	if err := s.db.WithContext(ctx).Create(&pairingCode).Error; err != nil {
 		return nil, apperr.Internal(err)
 	}
 
-	return &PairingCodeResponse{Code: code, ExpiresAt: pairingCode.ExpiresAt}, nil
+	return &domain.PairingCodeResponse{Code: code, ExpiresAt: pairingCode.ExpiresAt}, nil
 }
 
-func (s *Service) ListEndpointDevices(ctx context.Context, userID, endpointID string) ([]DeviceSummary, error) {
+func (s *EndpointService) ListEndpointDevices(ctx context.Context, userID, endpointID string) ([]domain.DeviceSummary, error) {
 	if _, err := s.findUserEndpoint(ctx, userID, endpointID); err != nil {
 		return nil, err
 	}
 
-	var devices []DeviceSummary
+	var devices []domain.DeviceSummary
 	if err := s.db.WithContext(ctx).
 		Table("devices").
 		Select("id, device_id, device_name, is_active, last_seen_at, created_at").
@@ -138,12 +137,12 @@ func (s *Service) ListEndpointDevices(ctx context.Context, userID, endpointID st
 	return devices, nil
 }
 
-func (s *Service) ListEndpointEvents(ctx context.Context, userID, endpointID string) ([]EventSummary, error) {
+func (s *EndpointService) ListEndpointEvents(ctx context.Context, userID, endpointID string) ([]domain.EventSummary, error) {
 	if _, err := s.findUserEndpoint(ctx, userID, endpointID); err != nil {
 		return nil, err
 	}
 
-	var events []EventSummary
+	var events []domain.EventSummary
 	if err := s.db.WithContext(ctx).
 		Table("events").
 		Select("id, method, path, content_type, received_at, created_at").
@@ -155,8 +154,8 @@ func (s *Service) ListEndpointEvents(ctx context.Context, userID, endpointID str
 	return events, nil
 }
 
-func (s *Service) findUserEndpoint(ctx context.Context, userID, id string) (*Endpoint, error) {
-	var endpoint Endpoint
+func (s *EndpointService) findUserEndpoint(ctx context.Context, userID, id string) (*domain.Endpoint, error) {
+	var endpoint domain.Endpoint
 	err := s.db.WithContext(ctx).First(&endpoint, "id = ? AND user_id = ?", id, userID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, apperr.NotFound("endpoint.not_found", "Endpoint not found")
@@ -167,14 +166,14 @@ func (s *Service) findUserEndpoint(ctx context.Context, userID, id string) (*End
 	return &endpoint, nil
 }
 
-func endpointToResponse(endpoint *Endpoint) *EndpointResponse {
-	return &EndpointResponse{
-		ID:        endpoint.ID,
-		Name:      endpoint.Name,
-		Slug:      endpoint.Slug,
-		IsActive:  endpoint.IsActive,
-		CreatedAt: endpoint.CreatedAt,
-		UpdatedAt: endpoint.UpdatedAt,
+func endpointToResponse(in *domain.Endpoint) *domain.EndpointResponse {
+	return &domain.EndpointResponse{
+		ID:        in.ID,
+		Name:      in.Name,
+		Slug:      in.Slug,
+		IsActive:  in.IsActive,
+		CreatedAt: in.CreatedAt,
+		UpdatedAt: in.UpdatedAt,
 	}
 }
 

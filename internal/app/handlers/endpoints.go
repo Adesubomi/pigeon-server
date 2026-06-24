@@ -1,37 +1,31 @@
-package endpoint
+package handlers
 
 import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/adesubomi/pigeon-server/internal/domain/auth"
+	endpointDomain "github.com/adesubomi/pigeon-server/internal/domain/endpoint"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 	"github.com/adesubomi/pigeon-server/pkg/respond"
 	"github.com/go-chi/chi/v5"
 )
 
-type Handler struct {
-	service *Service
-}
+type EndpointHandler Handler
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
-}
-
-func (h *Handler) CreateEndpoint(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+func (h *EndpointHandler) CreateEndpoint(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.authSvc.UserFromContext(r.Context())
 	if !ok {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
 
-	var req CreateEndpointRequest
+	var req endpointDomain.CreateEndpointRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respond.Error(w, apperr.BadRequest("request.invalid_json", "Invalid JSON body"))
 		return
 	}
 
-	result, err := h.service.CreateEndpoint(r.Context(), CreateEndpointInput{UserID: user.ID, Name: req.Name})
+	result, err := h.endpointSvc.CreateEndpoint(r.Context(), endpointDomain.CreateEndpointInput{UserID: user.ID, Name: req.Name})
 	if err != nil {
 		respond.Error(w, err)
 		return
@@ -39,13 +33,13 @@ func (h *Handler) CreateEndpoint(w http.ResponseWriter, r *http.Request) {
 	respond.Created(w, result)
 }
 
-func (h *Handler) ListEndpoints(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+func (h *EndpointHandler) ListEndpoints(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.authSvc.UserFromContext(r.Context())
 	if !ok {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
-	result, err := h.service.ListEndpoints(r.Context(), user.ID)
+	result, err := h.endpointSvc.ListEndpoints(r.Context(), user.ID)
 	if err != nil {
 		respond.Error(w, err)
 		return
@@ -53,13 +47,13 @@ func (h *Handler) ListEndpoints(w http.ResponseWriter, r *http.Request) {
 	respond.OK(w, result)
 }
 
-func (h *Handler) GetEndpoint(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+func (h *EndpointHandler) GetEndpoint(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.authSvc.UserFromContext(r.Context())
 	if !ok {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
-	result, err := h.service.GetEndpoint(r.Context(), user.ID, chi.URLParam(r, "id"))
+	result, err := h.endpointSvc.GetEndpoint(r.Context(), user.ID, chi.URLParam(r, "id"))
 	if err != nil {
 		respond.Error(w, err)
 		return
@@ -67,20 +61,20 @@ func (h *Handler) GetEndpoint(w http.ResponseWriter, r *http.Request) {
 	respond.OK(w, result)
 }
 
-func (h *Handler) UpdateEndpoint(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+func (h *EndpointHandler) UpdateEndpoint(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.authSvc.UserFromContext(r.Context())
 	if !ok {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
 
-	var req UpdateEndpointRequest
+	var req endpointDomain.UpdateEndpointRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respond.Error(w, apperr.BadRequest("request.invalid_json", "Invalid JSON body"))
 		return
 	}
 
-	result, err := h.service.UpdateEndpoint(r.Context(), UpdateEndpointInput{
+	result, err := h.endpointSvc.UpdateEndpoint(r.Context(), endpointDomain.UpdateEndpointInput{
 		UserID:   user.ID,
 		ID:       chi.URLParam(r, "id"),
 		Name:     req.Name,
@@ -93,26 +87,26 @@ func (h *Handler) UpdateEndpoint(w http.ResponseWriter, r *http.Request) {
 	respond.OK(w, result)
 }
 
-func (h *Handler) DeleteEndpoint(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+func (h *EndpointHandler) DeleteEndpoint(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.authSvc.UserFromContext(r.Context())
 	if !ok {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
-	if err := h.service.DeleteEndpoint(r.Context(), user.ID, chi.URLParam(r, "id")); err != nil {
+	if err := h.endpointSvc.DeleteEndpoint(r.Context(), user.ID, chi.URLParam(r, "id")); err != nil {
 		respond.Error(w, err)
 		return
 	}
 	respond.NoContent(w)
 }
 
-func (h *Handler) GeneratePairingCode(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+func (h *EndpointHandler) GeneratePairingCode(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.authSvc.UserFromContext(r.Context())
 	if !ok {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
-	result, err := h.service.GeneratePairingCode(r.Context(), user.ID, chi.URLParam(r, "id"))
+	result, err := h.endpointSvc.GeneratePairingCode(r.Context(), user.ID, chi.URLParam(r, "id"))
 	if err != nil {
 		respond.Error(w, err)
 		return
@@ -120,13 +114,13 @@ func (h *Handler) GeneratePairingCode(w http.ResponseWriter, r *http.Request) {
 	respond.Created(w, result)
 }
 
-func (h *Handler) ListEndpointDevices(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+func (h *EndpointHandler) ListEndpointDevices(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.authSvc.UserFromContext(r.Context())
 	if !ok {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
-	result, err := h.service.ListEndpointDevices(r.Context(), user.ID, chi.URLParam(r, "id"))
+	result, err := h.endpointSvc.ListEndpointDevices(r.Context(), user.ID, chi.URLParam(r, "id"))
 	if err != nil {
 		respond.Error(w, err)
 		return
@@ -134,13 +128,13 @@ func (h *Handler) ListEndpointDevices(w http.ResponseWriter, r *http.Request) {
 	respond.OK(w, result)
 }
 
-func (h *Handler) ListEndpointEvents(w http.ResponseWriter, r *http.Request) {
-	user, ok := auth.UserFromContext(r.Context())
+func (h *EndpointHandler) ListEndpointEvents(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.authSvc.UserFromContext(r.Context())
 	if !ok {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
-	result, err := h.service.ListEndpointEvents(r.Context(), user.ID, chi.URLParam(r, "id"))
+	result, err := h.endpointSvc.ListEndpointEvents(r.Context(), user.ID, chi.URLParam(r, "id"))
 	if err != nil {
 		respond.Error(w, err)
 		return

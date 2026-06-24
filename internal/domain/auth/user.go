@@ -17,7 +17,7 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-func (u *User) BeforeCreate(tx *gorm.DB) error {
+func (u *User) BeforeCreate(_ *gorm.DB) error {
 	if u.ID == "" {
 		u.ID = uuid.NewString()
 	}

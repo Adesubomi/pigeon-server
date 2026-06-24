@@ -1,4 +1,4 @@
-package auth
+package services
 
 import (
 	"context"
@@ -14,24 +14,35 @@ import (
 	"time"
 
 	"github.com/adesubomi/pigeon-server/config"
+	"github.com/adesubomi/pigeon-server/internal/domain/auth"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 	"github.com/adesubomi/pigeon-server/pkg/respond"
 	"gorm.io/gorm"
 )
 
-type contextKey string
-
 const userContextKey contextKey = "auth.user"
 
-type Service struct {
+type AuthService struct {
 	db         *gorm.DB
 	cfg        *config.Config
 	httpClient *http.Client
-	loadUser   func(context.Context, string) (*User, error)
+	loadUser   func(context.Context, string) (*auth.User, error)
 }
 
-func NewService(db *gorm.DB, cfg *config.Config) *Service {
-	service := &Service{
+func bearerToken(r *http.Request) string {
+	header := r.Header.Get("Authorization")
+	if header == "" {
+		return ""
+	}
+	prefix, value, ok := strings.Cut(header, " ")
+	if !ok || !strings.EqualFold(prefix, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func NewAuth(db *gorm.DB, cfg *config.Config) *AuthService {
+	service := &AuthService{
 		db:         db,
 		cfg:        cfg,
 		httpClient: http.DefaultClient,
@@ -40,7 +51,7 @@ func NewService(db *gorm.DB, cfg *config.Config) *Service {
 	return service
 }
 
-func (s *Service) GitHubLoginURL(ctx context.Context, redirectURI, state string) (string, error) {
+func (s *AuthService) GitHubLoginURL(ctx context.Context, redirectURI, state string) (string, error) {
 	if s.cfg.GitHubClientID == "" {
 		return "", githubOAuthNotConfigured()
 	}
@@ -60,7 +71,7 @@ func (s *Service) GitHubLoginURL(ctx context.Context, redirectURI, state string)
 	return "https://github.com/login/oauth/authorize?" + values.Encode(), nil
 }
 
-func (s *Service) ExchangeGitHubCode(ctx context.Context, input GitHubExchangeInput) (*AuthTokenResponse, error) {
+func (s *AuthService) ExchangeGitHubCode(ctx context.Context, input auth.GitHubExchangeInput) (*auth.AuthTokenResponse, error) {
 	if strings.TrimSpace(input.Code) == "" {
 		return nil, apperr.BadRequest("auth.code_required", "OAuth code is required")
 	}
@@ -83,7 +94,7 @@ func (s *Service) ExchangeGitHubCode(ctx context.Context, input GitHubExchangeIn
 		return nil, err
 	}
 
-	user := User{
+	user := auth.User{
 		GithubID:  fmt.Sprintf("%d", githubUser.ID),
 		Email:     githubUser.Email,
 		Name:      githubUser.Name,
@@ -94,8 +105,8 @@ func (s *Service) ExchangeGitHubCode(ctx context.Context, input GitHubExchangeIn
 	}
 
 	if err := s.db.WithContext(ctx).
-		Where(User{GithubID: user.GithubID}).
-		Assign(User{
+		Where(auth.User{GithubID: user.GithubID}).
+		Assign(auth.User{
 			Email:     user.Email,
 			Name:      user.Name,
 			AvatarURL: user.AvatarURL,
@@ -114,15 +125,15 @@ func githubOAuthNotConfigured() error {
 	)
 }
 
-func (s *Service) CurrentUser(ctx context.Context) (*User, error) {
-	user, ok := UserFromContext(ctx)
+func (s *AuthService) CurrentUser(ctx context.Context) (*auth.User, error) {
+	user, ok := s.UserFromContext(ctx)
 	if !ok {
 		return nil, apperr.Unauthorized("auth.unauthorized", "Authentication required")
 	}
 	return user, nil
 }
 
-func (s *Service) RequireUser(next http.Handler) http.Handler {
+func (s *AuthService) RequireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rawToken := bearerToken(r)
 		if rawToken == "" {
@@ -142,19 +153,19 @@ func (s *Service) RequireUser(next http.Handler) http.Handler {
 			return
 		}
 
-		next.ServeHTTP(w, r.WithContext(ContextWithUser(r.Context(), user)))
+		next.ServeHTTP(w, r.WithContext(s.ContextWithUser(r.Context(), user)))
 	})
 }
 
-func (s *Service) loadUserFromDB(ctx context.Context, userID string) (*User, error) {
-	var user User
+func (s *AuthService) loadUserFromDB(ctx context.Context, userID string) (*auth.User, error) {
+	var user auth.User
 	if err := s.db.WithContext(ctx).First(&user, "id = ?", userID).Error; err != nil {
 		return nil, err
 	}
 	return &user, nil
 }
 
-func (s *Service) CreateAccessToken(userID string) (string, time.Time, error) {
+func (s *AuthService) CreateAccessToken(userID string) (string, time.Time, error) {
 	now := time.Now().UTC()
 	expiresAt := now.Add(s.cfg.AuthAccessTokenTTL)
 
@@ -177,7 +188,7 @@ func (s *Service) CreateAccessToken(userID string) (string, time.Time, error) {
 	return signingInput + "." + signature, expiresAt, nil
 }
 
-func (s *Service) CreateSession(userID string) string {
+func (s *AuthService) CreateSession(userID string) string {
 	token, _, err := s.CreateAccessToken(userID)
 	if err != nil {
 		return ""
@@ -185,12 +196,12 @@ func (s *Service) CreateSession(userID string) string {
 	return token
 }
 
-func (s *Service) tokenResponse(user *User) (*AuthTokenResponse, error) {
+func (s *AuthService) tokenResponse(user *auth.User) (*auth.AuthTokenResponse, error) {
 	accessToken, expiresAt, err := s.CreateAccessToken(user.ID)
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	return &AuthTokenResponse{
+	return &auth.AuthTokenResponse{
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
 		ExpiresIn:   int64(time.Until(expiresAt).Seconds()),
@@ -198,7 +209,7 @@ func (s *Service) tokenResponse(user *User) (*AuthTokenResponse, error) {
 	}, nil
 }
 
-func (s *Service) verifyAccessToken(rawToken string) (string, bool) {
+func (s *AuthService) verifyAccessToken(rawToken string) (string, bool) {
 	parts := strings.Split(rawToken, ".")
 	if len(parts) != 3 {
 		return "", false
@@ -232,16 +243,16 @@ func (s *Service) verifyAccessToken(rawToken string) (string, bool) {
 	return claims.Subject, true
 }
 
-func ContextWithUser(ctx context.Context, user *User) context.Context {
+func (s *AuthService) ContextWithUser(ctx context.Context, user *auth.User) context.Context {
 	return context.WithValue(ctx, userContextKey, user)
 }
 
-func UserFromContext(ctx context.Context) (*User, bool) {
-	user, ok := ctx.Value(userContextKey).(*User)
+func (s *AuthService) UserFromContext(ctx context.Context) (*auth.User, bool) {
+	user, ok := ctx.Value(userContextKey).(*auth.User)
 	return user, ok
 }
 
-func (s *Service) exchangeGitHubToken(ctx context.Context, input GitHubExchangeInput) (*githubTokenResponse, error) {
+func (s *AuthService) exchangeGitHubToken(ctx context.Context, input auth.GitHubExchangeInput) (*githubTokenResponse, error) {
 	payload := url.Values{}
 	payload.Set("client_id", s.cfg.GitHubClientID)
 	payload.Set("client_secret", s.cfg.GitHubClientSecret)
@@ -283,7 +294,7 @@ func (s *Service) exchangeGitHubToken(ctx context.Context, input GitHubExchangeI
 	return &tokenResponse, nil
 }
 
-func (s *Service) validateRedirectURI(value string) (string, error) {
+func (s *AuthService) validateRedirectURI(value string) (string, error) {
 	if value = strings.TrimSpace(value); value == "" {
 		value = strings.TrimRight(s.cfg.WebAppURL, "/") + "/auth/callback"
 	}
@@ -305,7 +316,7 @@ func (s *Service) validateRedirectURI(value string) (string, error) {
 	return "", apperr.BadRequest("auth.redirect_uri_invalid", "OAuth redirect URI is not allowed")
 }
 
-func (s *Service) fetchGitHubUser(ctx context.Context, accessToken string) (*githubUserResponse, error) {
+func (s *AuthService) fetchGitHubUser(ctx context.Context, accessToken string) (*githubUserResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -338,7 +349,7 @@ func (s *Service) fetchGitHubUser(ctx context.Context, accessToken string) (*git
 	return &user, nil
 }
 
-func (s *Service) sign(value string) string {
+func (s *AuthService) sign(value string) string {
 	mac := hmac.New(sha256.New, []byte(s.cfg.AppKey))
 	_, _ = mac.Write([]byte(value))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
@@ -358,18 +369,6 @@ func decodeJWTPart(value string, target any) bool {
 		return false
 	}
 	return json.Unmarshal(payload, target) == nil
-}
-
-func bearerToken(r *http.Request) string {
-	header := r.Header.Get("Authorization")
-	if header == "" {
-		return ""
-	}
-	prefix, value, ok := strings.Cut(header, " ")
-	if !ok || !strings.EqualFold(prefix, "Bearer") {
-		return ""
-	}
-	return strings.TrimSpace(value)
 }
 
 type accessTokenClaims struct {

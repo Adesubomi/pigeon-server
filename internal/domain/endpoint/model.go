@@ -26,10 +26,10 @@ func (e *Endpoint) BeforeCreate(tx *gorm.DB) error {
 }
 
 type PairingCode struct {
-	ID         string     `gorm:"type:uuid;primaryKey" json:"id"`
-	EndpointID string     `gorm:"type:uuid;index;not null" json:"endpoint_id"`
-	CodeHash   string     `gorm:"uniqueIndex;not null" json:"-"`
-	ExpiresAt  time.Time  `gorm:"index;not null" json:"expires_at"`
+	ID         string     `json:"id" gorm:"type:uuid;primaryKey"`
+	EndpointID string     `json:"endpoint_id" gorm:"type:uuid;index;not null"`
+	CodeHash   string     `json:"-" gorm:"uniqueIndex;not null"`
+	ExpiresAt  time.Time  `json:"expires_at" gorm:"index;not null"`
 	UsedAt     *time.Time `json:"used_at"`
 	CreatedAt  time.Time  `json:"created_at"`
 }

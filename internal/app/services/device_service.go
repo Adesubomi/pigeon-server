@@ -1,4 +1,4 @@
-package device
+package services
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	domain "github.com/adesubomi/pigeon-server/internal/domain/device"
 	"github.com/adesubomi/pigeon-server/internal/domain/endpoint"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 	"github.com/adesubomi/pigeon-server/pkg/clock"
@@ -18,16 +19,18 @@ type contextKey string
 
 const deviceContextKey contextKey = "device.device"
 
-type Service struct {
+type DeviceService struct {
 	db    *gorm.DB
 	clock clock.Clock
 }
 
-func NewService(db *gorm.DB, clock clock.Clock) *Service {
-	return &Service{db: db, clock: clock}
+func NewDevice(db *gorm.DB) *DeviceService {
+	return &DeviceService{
+		db: db,
+	}
 }
 
-func (s *Service) PairDevice(ctx context.Context, input PairDeviceInput) (*PairDeviceResponse, error) {
+func (s *DeviceService) PairDevice(ctx context.Context, input domain.PairDeviceInput) (*domain.PairDeviceResponse, error) {
 	if strings.TrimSpace(input.Code) == "" {
 		return nil, apperr.Validation(map[string]string{"code": "Pairing code is required"})
 	}
@@ -60,7 +63,7 @@ func (s *Service) PairDevice(ctx context.Context, input PairDeviceInput) (*PairD
 		}
 	}
 
-	newDevice := Device{
+	newDevice := domain.Device{
 		EndpointID: pairingCode.EndpointID,
 		DeviceID:   deviceID,
 		DeviceName: strings.TrimSpace(input.DeviceName),
@@ -80,18 +83,18 @@ func (s *Service) PairDevice(ctx context.Context, input PairDeviceInput) (*PairD
 		return nil, apperr.Internal(err)
 	}
 
-	return &PairDeviceResponse{DeviceID: newDevice.ID, Token: rawToken}, nil
+	return &domain.PairDeviceResponse{DeviceID: newDevice.ID, Token: rawToken}, nil
 }
 
-func (s *Service) Heartbeat(ctx context.Context, device *Device) (*HeartbeatResponse, error) {
+func (s *DeviceService) Heartbeat(ctx context.Context, device *domain.Device) (*domain.HeartbeatResponse, error) {
 	now := s.clock.Now()
 	if err := s.db.WithContext(ctx).Model(device).Update("last_seen_at", now).Error; err != nil {
 		return nil, apperr.Internal(err)
 	}
-	return &HeartbeatResponse{LastSeenAt: now}, nil
+	return &domain.HeartbeatResponse{LastSeenAt: now}, nil
 }
 
-func (s *Service) UpdateDevice(ctx context.Context, input UpdateDeviceInput) (*DeviceResponse, error) {
+func (s *DeviceService) UpdateDevice(ctx context.Context, input domain.UpdateDeviceInput) (*domain.DeviceResponse, error) {
 	if input.Device == nil || input.Device.ID != input.ID {
 		return nil, apperr.Forbidden("device.forbidden", "Device token cannot update this device")
 	}
@@ -113,14 +116,14 @@ func (s *Service) UpdateDevice(ctx context.Context, input UpdateDeviceInput) (*D
 		}
 	}
 
-	var updated Device
+	var updated domain.Device
 	if err := s.db.WithContext(ctx).First(&updated, "id = ?", input.ID).Error; err != nil {
 		return nil, apperr.Internal(err)
 	}
 	return deviceToResponse(&updated), nil
 }
 
-func (s *Service) DeleteDevice(ctx context.Context, currentDevice *Device, id string) error {
+func (s *DeviceService) DeleteDevice(ctx context.Context, currentDevice *domain.Device, id string) error {
 	if currentDevice == nil || currentDevice.ID != id {
 		return apperr.Forbidden("device.forbidden", "Device token cannot delete this device")
 	}
@@ -130,7 +133,7 @@ func (s *Service) DeleteDevice(ctx context.Context, currentDevice *Device, id st
 	return nil
 }
 
-func (s *Service) RequireDevice(next http.Handler) http.Handler {
+func (s *DeviceService) RequireDevice(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rawToken := bearerToken(r)
 		if rawToken == "" {
@@ -141,7 +144,7 @@ func (s *Service) RequireDevice(next http.Handler) http.Handler {
 			return
 		}
 
-		var device Device
+		var device domain.Device
 		err := s.db.WithContext(r.Context()).
 			First(&device, "token_hash = ? AND is_active = true", token.Hash(rawToken)).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -157,29 +160,17 @@ func (s *Service) RequireDevice(next http.Handler) http.Handler {
 	})
 }
 
-func ContextWithDevice(ctx context.Context, device *Device) context.Context {
+func ContextWithDevice(ctx context.Context, device *domain.Device) context.Context {
 	return context.WithValue(ctx, deviceContextKey, device)
 }
 
-func DeviceFromContext(ctx context.Context) (*Device, bool) {
-	device, ok := ctx.Value(deviceContextKey).(*Device)
+func DeviceFromContext(ctx context.Context) (*domain.Device, bool) {
+	device, ok := ctx.Value(deviceContextKey).(*domain.Device)
 	return device, ok
 }
 
-func bearerToken(r *http.Request) string {
-	header := r.Header.Get("Authorization")
-	if header == "" {
-		return ""
-	}
-	prefix, value, ok := strings.Cut(header, " ")
-	if !ok || !strings.EqualFold(prefix, "Bearer") {
-		return ""
-	}
-	return strings.TrimSpace(value)
-}
-
-func deviceToResponse(device *Device) *DeviceResponse {
-	return &DeviceResponse{
+func deviceToResponse(device *domain.Device) *domain.DeviceResponse {
+	return &domain.DeviceResponse{
 		ID:         device.ID,
 		EndpointID: device.EndpointID,
 		DeviceID:   device.DeviceID,

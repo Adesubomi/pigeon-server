@@ -1,4 +1,4 @@
-package auth
+package services
 
 import (
 	"context"
@@ -178,8 +178,8 @@ func TestMeReturnsAuthenticatedUser(t *testing.T) {
 	}
 }
 
-func newTestService() *Service {
-	return NewService(nil, &config.Config{
+func newTestService() *DeviceService {
+	return NewAuth(nil, &config.Config{
 		AppKey:             "test-signing-key",
 		GitHubClientID:     "client-id",
 		GitHubClientSecret: "client-secret",

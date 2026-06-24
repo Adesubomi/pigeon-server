@@ -1,23 +1,18 @@
-package auth
+package handlers
 
 import (
 	"encoding/json"
 	"net/http"
 
+	domain "github.com/adesubomi/pigeon-server/internal/domain/auth"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 	"github.com/adesubomi/pigeon-server/pkg/respond"
 )
 
-type Handler struct {
-	service *Service
-}
+type AuthHandler Handler
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
-}
-
-func (h *Handler) GitHubLogin(w http.ResponseWriter, r *http.Request) {
-	url, err := h.service.GitHubLoginURL(
+func (h *AuthHandler) GitHubLogin(w http.ResponseWriter, r *http.Request) {
+	url, err := h.authSvc.GitHubLoginURL(
 		r.Context(),
 		r.URL.Query().Get("redirect_uri"),
 		r.URL.Query().Get("state"),
@@ -26,17 +21,17 @@ func (h *Handler) GitHubLogin(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, err)
 		return
 	}
-	respond.OK(w, GitHubLoginResponse{URL: url})
+	respond.OK(w, domain.GitHubLoginResponse{URL: url})
 }
 
-func (h *Handler) GitHubExchange(w http.ResponseWriter, r *http.Request) {
-	var req GitHubExchangeRequest
+func (h *AuthHandler) GitHubExchange(w http.ResponseWriter, r *http.Request) {
+	var req domain.GitHubExchangeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respond.Error(w, apperr.BadRequest("request.invalid_json", "Invalid JSON body"))
 		return
 	}
 
-	result, err := h.service.ExchangeGitHubCode(r.Context(), GitHubExchangeInput{
+	result, err := h.authSvc.ExchangeGitHubCode(r.Context(), domain.GitHubExchangeInput{
 		Code:        req.Code,
 		RedirectURI: req.RedirectURI,
 	})
@@ -47,15 +42,15 @@ func (h *Handler) GitHubExchange(w http.ResponseWriter, r *http.Request) {
 	respond.OK(w, result)
 }
 
-func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
-func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
-	user, err := h.service.CurrentUser(r.Context())
+func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
+	user, err := h.authSvc.CurrentUser(r.Context())
 	if err != nil {
 		respond.Error(w, apperr.Unauthorized("auth.unauthorized", "Authentication required"))
 		return
 	}
-	respond.OK(w, MeResponse{User: user})
+	respond.OK(w, domain.MeResponse{User: user})
 }

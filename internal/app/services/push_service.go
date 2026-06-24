@@ -1,15 +1,16 @@
-package push
+package services
 
 import (
 	"context"
 
+	domain "github.com/adesubomi/pigeon-server/internal/domain/push"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 	"gorm.io/gorm"
 )
 
-type Service struct {
+type PushService struct {
 	db  *gorm.DB
-	hub *Hub
+	hub *domain.Hub
 }
 
 type PushEventInput struct {
@@ -18,22 +19,22 @@ type PushEventInput struct {
 	Payload    any
 }
 
-func NewService(db *gorm.DB, hub *Hub) *Service {
-	return &Service{db: db, hub: hub}
+func NewPushSvc(db *gorm.DB, hub *domain.Hub) *PushService {
+	return &PushService{db: db, hub: hub}
 }
 
-func (s *Service) Hub() *Hub {
+func (s *PushService) Hub() *domain.Hub {
 	return s.hub
 }
 
-func (s *Service) PushEvent(ctx context.Context, input PushEventInput) error {
-	attempts := s.hub.SendToEndpoint(input.EndpointID, Message{
+func (s *PushService) PushEvent(ctx context.Context, input PushEventInput) error {
+	attempts := s.hub.SendToEndpoint(input.EndpointID, domain.Message{
 		Event: "webhook.event",
 		Data:  input.Payload,
 	})
 
 	for _, attempt := range attempts {
-		log := DeliveryLog{
+		log := domain.DeliveryLog{
 			EventID:     input.EventID,
 			DeviceID:    attempt.DeviceID,
 			Status:      attempt.Status,

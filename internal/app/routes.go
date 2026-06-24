@@ -8,11 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adesubomi/pigeon-server/internal/domain/auth"
-	"github.com/adesubomi/pigeon-server/internal/domain/device"
-	"github.com/adesubomi/pigeon-server/internal/domain/endpoint"
-	"github.com/adesubomi/pigeon-server/internal/domain/event"
-	"github.com/adesubomi/pigeon-server/internal/domain/push"
+	"github.com/adesubomi/pigeon-server/internal/app/handlers"
+	"github.com/adesubomi/pigeon-server/internal/app/services"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 	"github.com/adesubomi/pigeon-server/pkg/respond"
 	"github.com/go-chi/chi/v5"
@@ -21,13 +18,11 @@ import (
 )
 
 type routesConfig struct {
-	authService     *auth.Service
-	deviceService   *device.Service
-	authHandler     *auth.Handler
-	endpointHandler *endpoint.Handler
-	deviceHandler   *device.Handler
-	eventHandler    *event.Handler
-	pushHandler     *push.Handler
+	authSvc     *services.AuthService
+	deviceSvc   *services.DeviceService
+	eventSvc    *services.EventService
+	endpointSvc *services.EndpointService
+	handlers    *handlers.Handler
 }
 
 func (a *App) routes(cfg routesConfig) http.Handler {
@@ -43,34 +38,35 @@ func (a *App) routes(cfg routesConfig) http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond.OK(w, map[string]string{"status": "ok"})
 	})
-	r.Post("/hooks/{slug}", cfg.eventHandler.ReceiveWebhook)
+	r.Post("/hooks/{slug}", cfg.handlers.Events().ReceiveWebhook)
 
-	r.Get("/auth/github", cfg.authHandler.GitHubLogin)
-	r.Post("/auth/github/exchange", cfg.authHandler.GitHubExchange)
-	r.Post("/auth/logout", cfg.authHandler.Logout)
-	r.With(cfg.authService.RequireUser).Get("/me", cfg.authHandler.Me)
+	r.Get("/auth/github", cfg.handlers.Auth().GitHubLogin)
+	r.Post("/auth/github/exchange", cfg.handlers.Auth().GitHubExchange)
+	r.Post("/auth/logout", cfg.handlers.Auth().Logout)
+
+	r.With(cfg.authSvc.RequireUser).Get("/me", cfg.handlers.Auth().Me)
 
 	r.Group(func(r chi.Router) {
-		r.Use(cfg.authService.RequireUser)
-		r.Post("/endpoints", cfg.endpointHandler.CreateEndpoint)
-		r.Get("/endpoints", cfg.endpointHandler.ListEndpoints)
-		r.Get("/endpoints/{id}", cfg.endpointHandler.GetEndpoint)
-		r.Patch("/endpoints/{id}", cfg.endpointHandler.UpdateEndpoint)
-		r.Delete("/endpoints/{id}", cfg.endpointHandler.DeleteEndpoint)
-		r.Post("/endpoints/{id}/pairing-codes", cfg.endpointHandler.GeneratePairingCode)
-		r.Get("/endpoints/{id}/devices", cfg.endpointHandler.ListEndpointDevices)
-		r.Get("/endpoints/{id}/events", cfg.endpointHandler.ListEndpointEvents)
-		r.Get("/events/{id}", cfg.eventHandler.GetEvent)
-		r.Post("/events/{id}/replay", cfg.eventHandler.ReplayEvent)
+		r.Use(cfg.authSvc.RequireUser)
+		r.Post("/endpoints", cfg.handlers.Endpoints().CreateEndpoint)
+		r.Get("/endpoints", cfg.handlers.Endpoints().ListEndpoints)
+		r.Get("/endpoints/{id}", cfg.handlers.Endpoints().GetEndpoint)
+		r.Patch("/endpoints/{id}", cfg.handlers.Endpoints().UpdateEndpoint)
+		r.Delete("/endpoints/{id}", cfg.handlers.Endpoints().DeleteEndpoint)
+		r.Post("/endpoints/{id}/pairing-codes", cfg.handlers.Endpoints().GeneratePairingCode)
+		r.Get("/endpoints/{id}/devices", cfg.handlers.Endpoints().ListEndpointDevices)
+		r.Get("/endpoints/{id}/events", cfg.handlers.Endpoints().ListEndpointEvents)
+		r.Get("/events/{id}", cfg.handlers.Events().GetEvent)
+		r.Post("/events/{id}/replay", cfg.handlers.Events().ReplayEvent)
 	})
 
-	r.Post("/devices/pair", cfg.deviceHandler.PairDevice)
+	r.Post("/devices/pair", cfg.handlers.Devices().PairDevice)
 	r.Group(func(r chi.Router) {
-		r.Use(cfg.deviceService.RequireDevice)
-		r.Post("/devices/heartbeat", cfg.deviceHandler.Heartbeat)
-		r.Patch("/devices/{id}", cfg.deviceHandler.UpdateDevice)
-		r.Delete("/devices/{id}", cfg.deviceHandler.DeleteDevice)
-		r.Get("/stream", cfg.pushHandler.Stream)
+		r.Use(cfg.deviceSvc.RequireDevice)
+		r.Post("/devices/heartbeat", cfg.handlers.Devices().Heartbeat)
+		r.Patch("/devices/{id}", cfg.handlers.Devices().UpdateDevice)
+		r.Delete("/devices/{id}", cfg.handlers.Devices().DeleteDevice)
+		r.Get("/stream", cfg.handlers.Devices().Stream)
 	})
 
 	return r

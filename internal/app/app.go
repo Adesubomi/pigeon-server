@@ -9,12 +9,9 @@ import (
 	"github.com/adesubomi/pigeon-server/infra/db"
 	infraotel "github.com/adesubomi/pigeon-server/infra/otel"
 	infraredis "github.com/adesubomi/pigeon-server/infra/redis"
-	"github.com/adesubomi/pigeon-server/internal/domain/auth"
-	"github.com/adesubomi/pigeon-server/internal/domain/device"
-	"github.com/adesubomi/pigeon-server/internal/domain/endpoint"
-	"github.com/adesubomi/pigeon-server/internal/domain/event"
+	"github.com/adesubomi/pigeon-server/internal/app/handlers"
+	"github.com/adesubomi/pigeon-server/internal/app/services"
 	"github.com/adesubomi/pigeon-server/internal/domain/push"
-	"github.com/adesubomi/pigeon-server/pkg/clock"
 )
 
 type App struct {
@@ -47,19 +44,14 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 		return nil, err
 	}
 
-	realClock := clock.RealClock{}
 	pushHub := push.NewHub()
-	pushService := push.NewService(store.Gorm, pushHub)
-	authService := auth.NewService(store.Gorm, cfg)
-	endpointService := endpoint.NewService(store.Gorm, realClock)
-	deviceService := device.NewService(store.Gorm, realClock)
-	eventService := event.NewService(store.Gorm, realClock, pushService)
+	pushSvc := services.NewPushSvc(store.Gorm, pushHub)
+	authSvc := services.NewAuth(store.Gorm, cfg)
+	endpointSvc := services.NewEndpointSvc(store.Gorm)
+	deviceSvc := services.NewDevice(store.Gorm)
+	eventSvc := services.NewEvent(store.Gorm, pushSvc)
 
-	authHandler := auth.NewHandler(authService)
-	endpointHandler := endpoint.NewHandler(endpointService)
-	deviceHandler := device.NewHandler(deviceService)
-	eventHandler := event.NewHandler(eventService)
-	pushHandler := push.NewHandler(pushService)
+	authHandler := handlers.NewHandler(authSvc)
 
 	app := &App{
 		cfg:          cfg,
@@ -71,13 +63,12 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 	}
 
 	app.router = app.routes(routesConfig{
-		authService:     authService,
-		deviceService:   deviceService,
-		authHandler:     authHandler,
-		endpointHandler: endpointHandler,
-		deviceHandler:   deviceHandler,
-		eventHandler:    eventHandler,
-		pushHandler:     pushHandler,
+		authSvc:     authSvc,
+		deviceSvc:   deviceSvc,
+		endpointSvc: endpointSvc,
+		eventSvc:    eventSvc,
+
+		handlers: authHandler,
 	})
 	app.server = &http.Server{
 		Addr:    cfg.HTTPAddr(),
