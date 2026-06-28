@@ -10,9 +10,19 @@ type Handler struct {
 	pushSvc     *services.PushService
 }
 
-func NewHandler(authSvc *services.AuthService) *Handler {
+func NewHandler(
+	authSvc *services.AuthService,
+	deviceSvc *services.DeviceService,
+	endpointSvc *services.EndpointService,
+	eventSvc *services.EventService,
+	pushSvc *services.PushService,
+) *Handler {
 	return &Handler{
-		authSvc: authSvc,
+		authSvc:     authSvc,
+		deviceSvc:   deviceSvc,
+		endpointSvc: endpointSvc,
+		eventSvc:    eventSvc,
+		pushSvc:     pushSvc,
 	}
 }
 

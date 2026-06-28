@@ -17,13 +17,17 @@ import (
 	"github.com/adesubomi/pigeon-server/internal/domain/auth"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 	"github.com/adesubomi/pigeon-server/pkg/respond"
-	"gorm.io/gorm"
 )
 
 const userContextKey contextKey = "auth.user"
 
+type AuthRepository interface {
+	FindUserByID(context.Context, string) (*auth.User, error)
+	UpsertGitHubUser(context.Context, auth.User) (*auth.User, error)
+}
+
 type AuthService struct {
-	db         *gorm.DB
+	repo       AuthRepository
 	cfg        *config.Config
 	httpClient *http.Client
 	loadUser   func(context.Context, string) (*auth.User, error)
@@ -41,17 +45,17 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(value)
 }
 
-func NewAuth(db *gorm.DB, cfg *config.Config) *AuthService {
+func NewAuth(repo AuthRepository, cfg *config.Config) *AuthService {
 	service := &AuthService{
-		db:         db,
+		repo:       repo,
 		cfg:        cfg,
 		httpClient: http.DefaultClient,
 	}
-	service.loadUser = service.loadUserFromDB
+	service.loadUser = service.loadUserFromRepo
 	return service
 }
 
-func (s *AuthService) GitHubLoginURL(ctx context.Context, redirectURI, state string) (string, error) {
+func (s *AuthService) GitHubLoginURL(_ context.Context, redirectURI, state string) (string, error) {
 	if s.cfg.GitHubClientID == "" {
 		return "", githubOAuthNotConfigured()
 	}
@@ -104,18 +108,12 @@ func (s *AuthService) ExchangeGitHubCode(ctx context.Context, input auth.GitHubE
 		user.Name = githubUser.Login
 	}
 
-	if err := s.db.WithContext(ctx).
-		Where(auth.User{GithubID: user.GithubID}).
-		Assign(auth.User{
-			Email:     user.Email,
-			Name:      user.Name,
-			AvatarURL: user.AvatarURL,
-		}).
-		FirstOrCreate(&user).Error; err != nil {
-		return nil, apperr.Internal(err)
+	storedUser, err := s.repo.UpsertGitHubUser(ctx, user)
+	if err != nil {
+		return nil, err
 	}
 
-	return s.tokenResponse(&user)
+	return s.tokenResponse(storedUser)
 }
 
 func githubOAuthNotConfigured() error {
@@ -157,12 +155,11 @@ func (s *AuthService) RequireUser(next http.Handler) http.Handler {
 	})
 }
 
-func (s *AuthService) loadUserFromDB(ctx context.Context, userID string) (*auth.User, error) {
-	var user auth.User
-	if err := s.db.WithContext(ctx).First(&user, "id = ?", userID).Error; err != nil {
-		return nil, err
+func (s *AuthService) loadUserFromRepo(ctx context.Context, userID string) (*auth.User, error) {
+	if s.repo == nil {
+		return nil, apperr.Unauthorized("auth.unauthorized", "Authentication required")
 	}
-	return &user, nil
+	return s.repo.FindUserByID(ctx, userID)
 }
 
 func (s *AuthService) CreateAccessToken(userID string) (string, time.Time, error) {
@@ -244,10 +241,18 @@ func (s *AuthService) verifyAccessToken(rawToken string) (string, bool) {
 }
 
 func (s *AuthService) ContextWithUser(ctx context.Context, user *auth.User) context.Context {
-	return context.WithValue(ctx, userContextKey, user)
+	return ContextWithUser(ctx, user)
 }
 
 func (s *AuthService) UserFromContext(ctx context.Context) (*auth.User, bool) {
+	return UserFromContext(ctx)
+}
+
+func ContextWithUser(ctx context.Context, user *auth.User) context.Context {
+	return context.WithValue(ctx, userContextKey, user)
+}
+
+func UserFromContext(ctx context.Context) (*auth.User, bool) {
 	user, ok := ctx.Value(userContextKey).(*auth.User)
 	return user, ok
 }

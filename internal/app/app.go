@@ -7,9 +7,10 @@ import (
 
 	"github.com/adesubomi/pigeon-server/config"
 	"github.com/adesubomi/pigeon-server/infra/db"
-	infraotel "github.com/adesubomi/pigeon-server/infra/otel"
-	infraredis "github.com/adesubomi/pigeon-server/infra/redis"
+	otelInfra "github.com/adesubomi/pigeon-server/infra/otel"
+	redisInfra "github.com/adesubomi/pigeon-server/infra/redis"
 	"github.com/adesubomi/pigeon-server/internal/app/handlers"
+	"github.com/adesubomi/pigeon-server/internal/app/repo"
 	"github.com/adesubomi/pigeon-server/internal/app/services"
 	"github.com/adesubomi/pigeon-server/internal/domain/push"
 )
@@ -18,15 +19,15 @@ type App struct {
 	cfg          *config.Config
 	logger       *slog.Logger
 	db           *db.DB
-	redis        *infraredis.Client
-	otelShutdown infraotel.ShutdownFunc
+	redis        *redisInfra.Client
+	otelShutdown otelInfra.ShutdownFunc
 	router       http.Handler
 	server       *http.Server
 	errCh        chan error
 }
 
 func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, error) {
-	otelShutdown, err := infraotel.Setup(ctx, cfg)
+	otelShutdown, err := otelInfra.Setup(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +38,7 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 		return nil, err
 	}
 
-	redisClient, err := infraredis.Connect(ctx, cfg)
+	redisClient, err := redisInfra.Connect(ctx, cfg)
 	if err != nil {
 		_ = store.Close()
 		_ = otelShutdown(ctx)
@@ -45,13 +46,19 @@ func New(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*App, er
 	}
 
 	pushHub := push.NewHub()
-	pushSvc := services.NewPushSvc(store.Gorm, pushHub)
-	authSvc := services.NewAuth(store.Gorm, cfg)
-	endpointSvc := services.NewEndpointSvc(store.Gorm)
-	deviceSvc := services.NewDevice(store.Gorm)
-	eventSvc := services.NewEvent(store.Gorm, pushSvc)
+	authRepo := repo.NewAuthRepo(store.Gorm)
+	deviceRepo := repo.NewDeviceRepo(store.Gorm)
+	endpointRepo := repo.NewEndpointRepo(store.Gorm)
+	eventRepo := repo.NewEventRepo(store.Gorm)
+	pushRepo := repo.NewPushRepo(store.Gorm)
 
-	authHandler := handlers.NewHandler(authSvc)
+	pushSvc := services.NewPushSvc(pushRepo, pushHub)
+	authSvc := services.NewAuth(authRepo, cfg)
+	endpointSvc := services.NewEndpointSvc(endpointRepo)
+	deviceSvc := services.NewDevice(deviceRepo)
+	eventSvc := services.NewEvent(eventRepo, pushSvc)
+
+	authHandler := handlers.NewHandler(authSvc, deviceSvc, endpointSvc, eventSvc, pushSvc)
 
 	app := &App{
 		cfg:          cfg,

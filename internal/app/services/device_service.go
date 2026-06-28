@@ -2,9 +2,9 @@ package services
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	domain "github.com/adesubomi/pigeon-server/internal/domain/device"
 	"github.com/adesubomi/pigeon-server/internal/domain/endpoint"
@@ -12,7 +12,6 @@ import (
 	"github.com/adesubomi/pigeon-server/pkg/clock"
 	"github.com/adesubomi/pigeon-server/pkg/respond"
 	"github.com/adesubomi/pigeon-server/pkg/token"
-	"gorm.io/gorm"
 )
 
 type contextKey string
@@ -20,13 +19,24 @@ type contextKey string
 const deviceContextKey contextKey = "device.device"
 
 type DeviceService struct {
-	db    *gorm.DB
+	repo  DeviceRepository
 	clock clock.Clock
 }
 
-func NewDevice(db *gorm.DB) *DeviceService {
+type DeviceRepository interface {
+	FindUsablePairingCode(context.Context, string, time.Time) (*endpoint.PairingCode, error)
+	CreateDeviceAndUsePairingCode(context.Context, *domain.Device, *endpoint.PairingCode) error
+	UpdateLastSeen(context.Context, *domain.Device, time.Time) error
+	UpdateDevice(context.Context, *domain.Device, map[string]any) error
+	FindDeviceByID(context.Context, string) (*domain.Device, error)
+	DeleteDevice(context.Context, *domain.Device) error
+	FindActiveDeviceByTokenHash(context.Context, string) (*domain.Device, error)
+}
+
+func NewDevice(repo DeviceRepository) *DeviceService {
 	return &DeviceService{
-		db: db,
+		repo:  repo,
+		clock: clock.RealClock{},
 	}
 }
 
@@ -39,15 +49,9 @@ func (s *DeviceService) PairDevice(ctx context.Context, input domain.PairDeviceI
 	}
 
 	now := s.clock.Now()
-	var pairingCode endpoint.PairingCode
-	err := s.db.WithContext(ctx).
-		Where("code_hash = ? AND used_at IS NULL AND expires_at > ?", token.Hash(strings.ToUpper(strings.TrimSpace(input.Code))), now).
-		First(&pairingCode).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, apperr.BadRequest("pairing_code.invalid", "Pairing code is invalid or expired")
-	}
+	pairingCode, err := s.repo.FindUsablePairingCode(ctx, token.Hash(strings.ToUpper(strings.TrimSpace(input.Code))), now)
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return nil, err
 	}
 
 	rawToken, err := token.GenerateURLSafe(32)
@@ -72,15 +76,9 @@ func (s *DeviceService) PairDevice(ctx context.Context, input domain.PairDeviceI
 		LastSeenAt: &now,
 	}
 
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&newDevice).Error; err != nil {
-			return err
-		}
-		pairingCode.UsedAt = &now
-		return tx.Save(&pairingCode).Error
-	})
-	if err != nil {
-		return nil, apperr.Internal(err)
+	pairingCode.UsedAt = &now
+	if err := s.repo.CreateDeviceAndUsePairingCode(ctx, &newDevice, pairingCode); err != nil {
+		return nil, err
 	}
 
 	return &domain.PairDeviceResponse{DeviceID: newDevice.ID, Token: rawToken}, nil
@@ -88,8 +86,8 @@ func (s *DeviceService) PairDevice(ctx context.Context, input domain.PairDeviceI
 
 func (s *DeviceService) Heartbeat(ctx context.Context, device *domain.Device) (*domain.HeartbeatResponse, error) {
 	now := s.clock.Now()
-	if err := s.db.WithContext(ctx).Model(device).Update("last_seen_at", now).Error; err != nil {
-		return nil, apperr.Internal(err)
+	if err := s.repo.UpdateLastSeen(ctx, device, now); err != nil {
+		return nil, err
 	}
 	return &domain.HeartbeatResponse{LastSeenAt: now}, nil
 }
@@ -111,26 +109,23 @@ func (s *DeviceService) UpdateDevice(ctx context.Context, input domain.UpdateDev
 		updates["is_active"] = *input.IsActive
 	}
 	if len(updates) > 0 {
-		if err := s.db.WithContext(ctx).Model(input.Device).Updates(updates).Error; err != nil {
-			return nil, apperr.Internal(err)
+		if err := s.repo.UpdateDevice(ctx, input.Device, updates); err != nil {
+			return nil, err
 		}
 	}
 
-	var updated domain.Device
-	if err := s.db.WithContext(ctx).First(&updated, "id = ?", input.ID).Error; err != nil {
-		return nil, apperr.Internal(err)
+	updated, err := s.repo.FindDeviceByID(ctx, input.ID)
+	if err != nil {
+		return nil, err
 	}
-	return deviceToResponse(&updated), nil
+	return deviceToResponse(updated), nil
 }
 
 func (s *DeviceService) DeleteDevice(ctx context.Context, currentDevice *domain.Device, id string) error {
 	if currentDevice == nil || currentDevice.ID != id {
 		return apperr.Forbidden("device.forbidden", "Device token cannot delete this device")
 	}
-	if err := s.db.WithContext(ctx).Delete(currentDevice).Error; err != nil {
-		return apperr.Internal(err)
-	}
-	return nil
+	return s.repo.DeleteDevice(ctx, currentDevice)
 }
 
 func (s *DeviceService) RequireDevice(next http.Handler) http.Handler {
@@ -144,19 +139,13 @@ func (s *DeviceService) RequireDevice(next http.Handler) http.Handler {
 			return
 		}
 
-		var device domain.Device
-		err := s.db.WithContext(r.Context()).
-			First(&device, "token_hash = ? AND is_active = true", token.Hash(rawToken)).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			respond.Error(w, apperr.Unauthorized("device.unauthorized", "Device authentication required"))
-			return
-		}
+		device, err := s.repo.FindActiveDeviceByTokenHash(r.Context(), token.Hash(rawToken))
 		if err != nil {
-			respond.Error(w, apperr.Internal(err))
+			respond.Error(w, err)
 			return
 		}
 
-		next.ServeHTTP(w, r.WithContext(ContextWithDevice(r.Context(), &device)))
+		next.ServeHTTP(w, r.WithContext(ContextWithDevice(r.Context(), device)))
 	})
 }
 

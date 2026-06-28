@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -11,15 +10,25 @@ import (
 	domain "github.com/adesubomi/pigeon-server/internal/domain/endpoint"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 	"github.com/adesubomi/pigeon-server/pkg/token"
-	"gorm.io/gorm"
 )
 
 type EndpointService struct {
-	db *gorm.DB
+	repo EndpointRepository
 }
 
-func NewEndpointSvc(db *gorm.DB) *EndpointService {
-	return &EndpointService{db: db}
+type EndpointRepository interface {
+	CreateEndpoint(context.Context, *domain.Endpoint) error
+	ListEndpoints(context.Context, string) ([]domain.Endpoint, error)
+	FindUserEndpoint(context.Context, string, string) (*domain.Endpoint, error)
+	SaveEndpoint(context.Context, *domain.Endpoint) error
+	DeleteEndpoint(context.Context, *domain.Endpoint) error
+	CreatePairingCode(context.Context, *domain.PairingCode) error
+	ListEndpointDevices(context.Context, string) ([]domain.DeviceSummary, error)
+	ListEndpointEvents(context.Context, string) ([]domain.EventSummary, error)
+}
+
+func NewEndpointSvc(repo EndpointRepository) *EndpointService {
+	return &EndpointService{repo: repo}
 }
 
 func (s *EndpointService) CreateEndpoint(ctx context.Context, input domain.CreateEndpointInput) (*domain.EndpointResponse, error) {
@@ -38,17 +47,17 @@ func (s *EndpointService) CreateEndpoint(ctx context.Context, input domain.Creat
 		Slug:     slugify(input.Name) + "-" + strings.ToLower(suffix),
 		IsActive: true,
 	}
-	if err := s.db.WithContext(ctx).Create(&endpoint).Error; err != nil {
-		return nil, apperr.Internal(err)
+	if err := s.repo.CreateEndpoint(ctx, &endpoint); err != nil {
+		return nil, err
 	}
 
 	return endpointToResponse(&endpoint), nil
 }
 
 func (s *EndpointService) ListEndpoints(ctx context.Context, userID string) ([]domain.EndpointResponse, error) {
-	var endpoints []domain.Endpoint
-	if err := s.db.WithContext(ctx).Where("user_id = ?", userID).Order("created_at desc").Find(&endpoints).Error; err != nil {
-		return nil, apperr.Internal(err)
+	endpoints, err := s.repo.ListEndpoints(ctx, userID)
+	if err != nil {
+		return nil, err
 	}
 
 	responses := make([]domain.EndpointResponse, 0, len(endpoints))
@@ -59,7 +68,7 @@ func (s *EndpointService) ListEndpoints(ctx context.Context, userID string) ([]d
 }
 
 func (s *EndpointService) GetEndpoint(ctx context.Context, userID, id string) (*domain.EndpointResponse, error) {
-	endpoint, err := s.findUserEndpoint(ctx, userID, id)
+	endpoint, err := s.repo.FindUserEndpoint(ctx, userID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +76,7 @@ func (s *EndpointService) GetEndpoint(ctx context.Context, userID, id string) (*
 }
 
 func (s *EndpointService) UpdateEndpoint(ctx context.Context, input domain.UpdateEndpointInput) (*domain.EndpointResponse, error) {
-	endpoint, err := s.findUserEndpoint(ctx, input.UserID, input.ID)
+	endpoint, err := s.repo.FindUserEndpoint(ctx, input.UserID, input.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,25 +90,22 @@ func (s *EndpointService) UpdateEndpoint(ctx context.Context, input domain.Updat
 	if input.IsActive != nil {
 		endpoint.IsActive = *input.IsActive
 	}
-	if err := s.db.WithContext(ctx).Save(endpoint).Error; err != nil {
-		return nil, apperr.Internal(err)
+	if err := s.repo.SaveEndpoint(ctx, endpoint); err != nil {
+		return nil, err
 	}
 	return endpointToResponse(endpoint), nil
 }
 
 func (s *EndpointService) DeleteEndpoint(ctx context.Context, userID, id string) error {
-	endpoint, err := s.findUserEndpoint(ctx, userID, id)
+	endpoint, err := s.repo.FindUserEndpoint(ctx, userID, id)
 	if err != nil {
 		return err
 	}
-	if err := s.db.WithContext(ctx).Delete(endpoint).Error; err != nil {
-		return apperr.Internal(err)
-	}
-	return nil
+	return s.repo.DeleteEndpoint(ctx, endpoint)
 }
 
 func (s *EndpointService) GeneratePairingCode(ctx context.Context, userID, endpointID string) (*domain.PairingCodeResponse, error) {
-	if _, err := s.findUserEndpoint(ctx, userID, endpointID); err != nil {
+	if _, err := s.repo.FindUserEndpoint(ctx, userID, endpointID); err != nil {
 		return nil, err
 	}
 
@@ -113,57 +119,27 @@ func (s *EndpointService) GeneratePairingCode(ctx context.Context, userID, endpo
 		CodeHash:   token.Hash(code),
 		ExpiresAt:  time.Now().Add(10 * time.Minute),
 	}
-	if err := s.db.WithContext(ctx).Create(&pairingCode).Error; err != nil {
-		return nil, apperr.Internal(err)
+	if err := s.repo.CreatePairingCode(ctx, &pairingCode); err != nil {
+		return nil, err
 	}
 
 	return &domain.PairingCodeResponse{Code: code, ExpiresAt: pairingCode.ExpiresAt}, nil
 }
 
 func (s *EndpointService) ListEndpointDevices(ctx context.Context, userID, endpointID string) ([]domain.DeviceSummary, error) {
-	if _, err := s.findUserEndpoint(ctx, userID, endpointID); err != nil {
+	if _, err := s.repo.FindUserEndpoint(ctx, userID, endpointID); err != nil {
 		return nil, err
 	}
 
-	var devices []domain.DeviceSummary
-	if err := s.db.WithContext(ctx).
-		Table("devices").
-		Select("id, device_id, device_name, is_active, last_seen_at, created_at").
-		Where("endpoint_id = ? AND deleted_at IS NULL", endpointID).
-		Order("created_at desc").
-		Scan(&devices).Error; err != nil {
-		return nil, apperr.Internal(err)
-	}
-	return devices, nil
+	return s.repo.ListEndpointDevices(ctx, endpointID)
 }
 
 func (s *EndpointService) ListEndpointEvents(ctx context.Context, userID, endpointID string) ([]domain.EventSummary, error) {
-	if _, err := s.findUserEndpoint(ctx, userID, endpointID); err != nil {
+	if _, err := s.repo.FindUserEndpoint(ctx, userID, endpointID); err != nil {
 		return nil, err
 	}
 
-	var events []domain.EventSummary
-	if err := s.db.WithContext(ctx).
-		Table("events").
-		Select("id, method, path, content_type, received_at, created_at").
-		Where("endpoint_id = ?", endpointID).
-		Order("received_at desc").
-		Scan(&events).Error; err != nil {
-		return nil, apperr.Internal(err)
-	}
-	return events, nil
-}
-
-func (s *EndpointService) findUserEndpoint(ctx context.Context, userID, id string) (*domain.Endpoint, error) {
-	var endpoint domain.Endpoint
-	err := s.db.WithContext(ctx).First(&endpoint, "id = ? AND user_id = ?", id, userID).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, apperr.NotFound("endpoint.not_found", "Endpoint not found")
-	}
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-	return &endpoint, nil
+	return s.repo.ListEndpointEvents(ctx, endpointID)
 }
 
 func endpointToResponse(in *domain.Endpoint) *domain.EndpointResponse {

@@ -3,32 +3,32 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	endpointDomain "github.com/adesubomi/pigeon-server/internal/domain/endpoint"
 	eventDomain "github.com/adesubomi/pigeon-server/internal/domain/event"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
-	"gorm.io/gorm"
 )
 
 type EventService struct {
-	db      *gorm.DB
+	repo    EventRepository
 	pushSvc *PushService
 }
 
-func NewEvent(db *gorm.DB, pushSvc *PushService) *EventService {
-	return &EventService{db: db, pushSvc: pushSvc}
+type EventRepository interface {
+	FindActiveEndpointBySlug(context.Context, string) (*endpointDomain.Endpoint, error)
+	CreateEvent(context.Context, *eventDomain.Event) error
+	FindUserEvent(context.Context, string, string) (*eventDomain.Event, error)
+}
+
+func NewEvent(repo EventRepository, pushSvc *PushService) *EventService {
+	return &EventService{repo: repo, pushSvc: pushSvc}
 }
 
 func (s *EventService) ReceiveWebhook(ctx context.Context, input eventDomain.ReceiveWebhookInput) (*eventDomain.WebhookReceivedResponse, error) {
-	var hookEndpoint endpointDomain.Endpoint
-	err := s.db.WithContext(ctx).First(&hookEndpoint, "slug = ? AND is_active = true", input.Slug).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, apperr.NotFound("endpoint.not_found", "Endpoint not found")
-	}
+	hookEndpoint, err := s.repo.FindActiveEndpointBySlug(ctx, input.Slug)
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return nil, err
 	}
 
 	headersJSON, err := json.Marshal(input.Headers)
@@ -50,8 +50,8 @@ func (s *EventService) ReceiveWebhook(ctx context.Context, input eventDomain.Rec
 		ContentType: input.ContentType,
 		ReceivedAt:  time.Now(),
 	}
-	if err := s.db.WithContext(ctx).Create(&webhookEvent).Error; err != nil {
-		return nil, apperr.Internal(err)
+	if err := s.repo.CreateEvent(ctx, &webhookEvent); err != nil {
+		return nil, err
 	}
 
 	if err := s.pushSvc.PushEvent(ctx, PushEventInput{
@@ -66,7 +66,7 @@ func (s *EventService) ReceiveWebhook(ctx context.Context, input eventDomain.Rec
 }
 
 func (s *EventService) GetEvent(ctx context.Context, userID, id string) (*eventDomain.EventResponse, error) {
-	webhookEvent, err := s.findUserEvent(ctx, userID, id)
+	webhookEvent, err := s.repo.FindUserEvent(ctx, userID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func (s *EventService) GetEvent(ctx context.Context, userID, id string) (*eventD
 }
 
 func (s *EventService) ReplayEvent(ctx context.Context, input eventDomain.ReplayEventInput) (*eventDomain.ReplayEventResponse, error) {
-	webhookEvent, err := s.findUserEvent(ctx, input.UserID, input.EventID)
+	webhookEvent, err := s.repo.FindUserEvent(ctx, input.UserID, input.EventID)
 	if err != nil {
 		return nil, err
 	}
@@ -86,23 +86,6 @@ func (s *EventService) ReplayEvent(ctx context.Context, input eventDomain.Replay
 		return nil, err
 	}
 	return &eventDomain.ReplayEventResponse{EventID: webhookEvent.ID, Status: "queued"}, nil
-}
-
-func (s *EventService) findUserEvent(ctx context.Context, userID, id string) (*eventDomain.Event, error) {
-	var webhookEvent eventDomain.Event
-	err := s.db.WithContext(ctx).
-		Table("events").
-		Joins("JOIN endpoints ON endpoints.id = events.endpoint_id").
-		Where("events.id = ? AND endpoints.user_id = ? AND endpoints.deleted_at IS NULL", id, userID).
-		Select("events.*").
-		First(&webhookEvent).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, apperr.NotFound("event.not_found", "Event not found")
-	}
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-	return &webhookEvent, nil
 }
 
 func eventToResponse(webhookEvent *eventDomain.Event) *eventDomain.EventResponse {

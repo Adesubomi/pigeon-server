@@ -4,13 +4,11 @@ import (
 	"context"
 
 	domain "github.com/adesubomi/pigeon-server/internal/domain/push"
-	"github.com/adesubomi/pigeon-server/pkg/apperr"
-	"gorm.io/gorm"
 )
 
 type PushService struct {
-	db  *gorm.DB
-	hub *domain.Hub
+	repo PushRepository
+	hub  *domain.Hub
 }
 
 type PushEventInput struct {
@@ -19,8 +17,12 @@ type PushEventInput struct {
 	Payload    any
 }
 
-func NewPushSvc(db *gorm.DB, hub *domain.Hub) *PushService {
-	return &PushService{db: db, hub: hub}
+type PushRepository interface {
+	CreateDeliveryLog(context.Context, *domain.DeliveryLog) error
+}
+
+func NewPushSvc(repo PushRepository, hub *domain.Hub) *PushService {
+	return &PushService{repo: repo, hub: hub}
 }
 
 func (s *PushService) Hub() *domain.Hub {
@@ -41,8 +43,8 @@ func (s *PushService) PushEvent(ctx context.Context, input PushEventInput) error
 			Error:       attempt.Error,
 			DeliveredAt: attempt.DeliveredAt,
 		}
-		if err := s.db.WithContext(ctx).Create(&log).Error; err != nil {
-			return apperr.Internal(err)
+		if err := s.repo.CreateDeliveryLog(ctx, &log); err != nil {
+			return err
 		}
 	}
 	return nil

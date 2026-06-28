@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/adesubomi/pigeon-server/config"
+	authDomain "github.com/adesubomi/pigeon-server/internal/domain/auth"
 	"github.com/adesubomi/pigeon-server/pkg/apperr"
 )
 
@@ -89,7 +90,7 @@ func TestExchangeGitHubTokenSendsValidatedConfiguration(t *testing.T) {
 		return jsonResponse(http.StatusOK, `{"access_token":"github-token","token_type":"bearer"}`), nil
 	})}
 
-	token, err := service.exchangeGitHubToken(context.Background(), GitHubExchangeInput{
+	token, err := service.exchangeGitHubToken(context.Background(), authDomain.GitHubExchangeInput{
 		Code:        "oauth-code",
 		RedirectURI: "http://localhost:3000/auth/callback",
 	})
@@ -104,15 +105,15 @@ func TestExchangeGitHubTokenSendsValidatedConfiguration(t *testing.T) {
 func TestExchangeGitHubCodeValidatesInputAndConfiguration(t *testing.T) {
 	service := newTestService()
 
-	_, err := service.ExchangeGitHubCode(context.Background(), GitHubExchangeInput{})
+	_, err := service.ExchangeGitHubCode(context.Background(), authDomain.GitHubExchangeInput{})
 	assertAppErrorCode(t, err, "auth.code_required")
 
 	service.cfg.GitHubClientSecret = ""
-	_, err = service.ExchangeGitHubCode(context.Background(), GitHubExchangeInput{Code: "code"})
+	_, err = service.ExchangeGitHubCode(context.Background(), authDomain.GitHubExchangeInput{Code: "code"})
 	assertAppErrorCode(t, err, "auth.github_not_configured")
 
 	service.cfg.GitHubClientSecret = "client-secret"
-	_, err = service.ExchangeGitHubCode(context.Background(), GitHubExchangeInput{
+	_, err = service.ExchangeGitHubCode(context.Background(), authDomain.GitHubExchangeInput{
 		Code:        "code",
 		RedirectURI: "https://attacker.example/callback",
 	})
@@ -121,8 +122,8 @@ func TestExchangeGitHubCodeValidatesInputAndConfiguration(t *testing.T) {
 
 func TestAccessTokenAndRequireUser(t *testing.T) {
 	service := newTestService()
-	expectedUser := &User{ID: "user-123", Name: "Ada", Email: "ada@example.com"}
-	service.loadUser = func(_ context.Context, userID string) (*User, error) {
+	expectedUser := &authDomain.User{ID: "user-123", Name: "Ada", Email: "ada@example.com"}
+	service.loadUser = func(_ context.Context, userID string) (*authDomain.User, error) {
 		if userID != expectedUser.ID {
 			t.Fatalf("user ID = %q", userID)
 		}
@@ -164,21 +165,21 @@ func TestAccessTokenAndRequireUser(t *testing.T) {
 	}
 }
 
-func TestMeReturnsAuthenticatedUser(t *testing.T) {
-	user := &User{ID: "user-123", Name: "Ada"}
-	handler := NewHandler(newTestService())
-	req := httptest.NewRequest(http.MethodGet, "/me", nil)
-	req = req.WithContext(ContextWithUser(req.Context(), user))
-	res := httptest.NewRecorder()
+func TestCurrentUserReturnsAuthenticatedUser(t *testing.T) {
+	service := newTestService()
+	user := &authDomain.User{ID: "user-123", Name: "Ada"}
+	ctx := ContextWithUser(context.Background(), user)
 
-	handler.Me(res, req)
-
-	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"id":"user-123"`) {
-		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	result, err := service.CurrentUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ID != user.ID {
+		t.Fatalf("user ID = %q", result.ID)
 	}
 }
 
-func newTestService() *DeviceService {
+func newTestService() *AuthService {
 	return NewAuth(nil, &config.Config{
 		AppKey:             "test-signing-key",
 		GitHubClientID:     "client-id",
